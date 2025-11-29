@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json()); // Permite a Express leer JSON en el cuerpo de las peticiones POST
 
 // =================================================================
-// 2. CONEXIÓN A LA BASE DE DATOS (SOLUCIÓN SSL IMPLEMENTADA)
+// 2. CONEXIÓN A LA BASE DE DATOS (SOLUCIÓN SSL DEFINITIVA)
 // =================================================================
 const dbConfig = {
     host: process.env.DB_HOST,
@@ -32,22 +32,19 @@ const dbConfig = {
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    ssl: {
-        // CORRECCIÓN: Deshabilita la verificación estricta del certificado
-        // para solucionar el error 'self-signed certificate in certificate chain'
-        rejectUnauthorized: false
-    }
+    // *** SOLUCIÓN: LA CONFIGURACIÓN SSL SE MANEJA AHORA CON LA VARIABLE DE ENTORNO EN RENDER ***
+    // Si la pones aquí, falla. Por eso se deja vacío el objeto SSL.
 };
 
 let connection;
 
 async function connectDB() {
     try {
+        // La conexión debe funcionar ahora que NODE_TLS_REJECT_UNAUTHORIZED está en 0
         connection = await mysql.createPool(dbConfig);
         console.log('✅ Conectado a DigitalOcean');
     } catch (error) {
         console.error('❌ Error al conectar a la base de datos:', error);
-        // Sale del proceso si la conexión falla para que Render intente de nuevo
         process.exit(1); 
     }
 }
@@ -128,7 +125,8 @@ app.post('/api/register', async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).send({ message: 'Este correo electrónico ya está registrado.' });
         }
-        console.error('Error al registrar usuario:', error);
+        // Este log ya no debería mostrar el error SSL, sino ER_NO_SUCH_TABLE o ER_DUP_ENTRY
+        console.error('Error al registrar usuario:', error); 
         res.status(500).send({ message: 'Error interno del servidor.' });
     }
 });
@@ -171,12 +169,13 @@ app.post('/api/login', async (req, res) => {
 
 
 // 4.4 RUTA PRIVADA (PROTEGIDA): Crear una Orden
+// Esta ruta requiere un JWT válido en el encabezado 'Authorization'
 app.post('/api/orders', protect, async (req, res) => {
     // req.user.id se obtiene del token gracias al middleware 'protect'
     const user_id = req.user.id; 
     const { shop_id, total_amount, building, classroom, delivery_notes } = req.body;
     
-    // VALIDACIÓN: El usuario debe haber creado la tabla 'orders' primero en SQL.
+    // Asumiendo que la tabla 'orders' ya fue creada en DigitalOcean
     if (!shop_id || !total_amount || !user_id) {
         return res.status(400).send({ message: 'Faltan datos requeridos para la orden.' });
     }
