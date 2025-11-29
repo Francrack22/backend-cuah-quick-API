@@ -10,8 +10,9 @@ const jwt = require('jsonwebtoken');
 // Obtener las variables de entorno de Render
 const PORT = process.env.PORT || 3000; 
 
-// ¡IMPORTANTE! CAMBIA ESTA CLAVE por una cadena larga y aleatoria
-const JWT_SECRET = 'TU_CLAVE_SECRETA_SUPER_LARGA_Y_COMPLEJA'; 
+// ¡CRÍTICO! Leer la clave de las variables de entorno de Render
+// (Debe coincidir con la variable JWT_SECRET que pusiste en el panel de Render)
+const JWT_SECRET = process.env.JWT_SECRET; 
 
 // Configuración de la aplicación Express
 const app = express();
@@ -32,15 +33,20 @@ const dbConfig = {
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    // *** SOLUCIÓN: LA CONFIGURACIÓN SSL SE MANEJA AHORA CON LA VARIABLE DE ENTORNO EN RENDER ***
-    // Si la pones aquí, falla. Por eso se deja vacío el objeto SSL.
+    // La verificación SSL se gestiona por la variable de entorno NODE_TLS_REJECT_UNAUTHORIZED=0 en Render
+    // Por eso se omite el objeto 'ssl' aquí.
 };
 
 let connection;
 
 async function connectDB() {
+    // Verificar si la clave secreta está definida antes de intentar el despliegue
+    if (!JWT_SECRET) {
+        console.error("❌ ERROR CRÍTICO: La variable de entorno JWT_SECRET no está definida.");
+        process.exit(1); 
+    }
+
     try {
-        // La conexión debe funcionar ahora que NODE_TLS_REJECT_UNAUTHORIZED está en 0
         connection = await mysql.createPool(dbConfig);
         console.log('✅ Conectado a DigitalOcean');
     } catch (error) {
@@ -57,7 +63,8 @@ const protect = (req, res, next) => {
     
     // Obtener el token del encabezado: Authorization: Bearer <token>
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        token = req.headers.authorization.split(' ')[1];
+        // Separa "Bearer" de "<token>" y toma el token
+        token = req.headers.authorization.split(' ')[1]; 
     }
 
     if (!token) {
@@ -65,11 +72,12 @@ const protect = (req, res, next) => {
     }
 
     try {
-        // Verificar y decodificar el token
+        // Verificar y decodificar el token usando la JWT_SECRET
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // Adjuntamos id, email y role
+        req.user = decoded; // Adjuntamos id, email y role al request
         next(); 
     } catch (error) {
+        // Este error ocurre si el token está incompleto, malformado o si la JWT_SECRET no coincide
         console.error('Error de token:', error);
         return res.status(401).send({ message: 'No autorizado, token fallido o expirado.' });
     }
@@ -88,6 +96,7 @@ app.get('/', (req, res) => {
 // 4.1 RUTA PÚBLICA: Obtener Productos
 app.get('/api/products', async (req, res) => {
     try {
+        // Asume que la tabla 'products' existe y tiene el campo 'is_available'
         const query = 'SELECT * FROM products WHERE is_available = 1';
         const [products] = await connection.query(query);
         
@@ -125,7 +134,6 @@ app.post('/api/register', async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).send({ message: 'Este correo electrónico ya está registrado.' });
         }
-        // Este log ya no debería mostrar el error SSL, sino ER_NO_SUCH_TABLE o ER_DUP_ENTRY
         console.error('Error al registrar usuario:', error); 
         res.status(500).send({ message: 'Error interno del servidor.' });
     }
@@ -152,7 +160,7 @@ app.post('/api/login', async (req, res) => {
         const token = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
             JWT_SECRET,
-            { expiresIn: '1h' } 
+            { expiresIn: '1h' } // Token expira en 1 hora
         );
 
         res.status(200).send({
@@ -175,7 +183,7 @@ app.post('/api/orders', protect, async (req, res) => {
     const user_id = req.user.id; 
     const { shop_id, total_amount, building, classroom, delivery_notes } = req.body;
     
-    // Asumiendo que la tabla 'orders' ya fue creada en DigitalOcean
+    // Asume que la tabla 'orders' ya fue creada en DigitalOcean
     if (!shop_id || !total_amount || !user_id) {
         return res.status(400).send({ message: 'Faltan datos requeridos para la orden.' });
     }
