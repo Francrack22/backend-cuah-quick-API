@@ -62,8 +62,8 @@ app.post('/api/register', async (req, res, next) => {
             return res.status(400).json({ message: "Nombre completo, email, contraseña, teléfono y matrícula son obligatorios." });
         }
         
-        // 2. RESTRICCIÓN DE CORREO ESCOLAR (🚨 CAMBIA ESTO)
-        const requiredDomain = '@tudominioescolar.edu.mx'; // 🚨🚨🚨 AJUSTA EL DOMINIO REAL DE TU ESCUELA 🚨🚨🚨
+        // 2. RESTRICCIÓN DE CORREO ESCOLAR (
+        const requiredDomain = '@ucq.edu.mx'; 
         if (!email.toLowerCase().endsWith(requiredDomain)) {
             return res.status(400).json({ 
                 message: `El registro solo está permitido para correos que terminan en ${requiredDomain}.` 
