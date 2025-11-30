@@ -1,4 +1,4 @@
-// server.js - Backend Cuah-Quick API (Final con MySQL y Roles)
+// server.js - Backend Cuah-Quick API (Final con Gestión de Pedidos)
 
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -16,14 +16,13 @@ const port = process.env.PORT || 3000;
 
 // 🚀 SOLUCIÓN CORS: Configuración específica para aceptar peticiones de GitHub Pages
 const corsOptions = {
-    // Reemplaza 'francrack22.github.io' por tu dominio exacto si cambia.
+    // ESTE DOMINIO DEBE COINCIDIR EXACTAMENTE CON TU SITIO
     origin: 'https://francrack22.github.io', 
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
-    optionsSuccessStatus: 204 // Para navegadores antiguos
+    optionsSuccessStatus: 204
 };
 app.use(cors(corsOptions));
-// FIN DE LA SOLUCIÓN CORS
 
 app.use(express.json());
 
@@ -45,10 +44,9 @@ const verifyToken = (req, res, next) => {
         return res.status(401).json({ message: "No autorizado, no se encontró token." });
     }
 
-    // 💡 Asegúrate que JWT_SECRET esté definido en las variables de entorno de Render
+    // Asegúrate que JWT_SECRET esté definido en las variables de entorno de Render
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
-            // Este error puede ser 401 por token expirado
             return res.status(401).json({ message: "No autorizado, token fallido o expirado." });
         }
         req.user = user; 
@@ -170,7 +168,7 @@ app.post('/api/login', async (req, res) => {
                 id: user.id,
                 full_name: user.full_name,
                 email: user.email,
-                role: user.role, // ¡CRUCIAL para el Frontend!
+                role: user.role, 
             }
         });
 
@@ -220,7 +218,8 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 
 app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
     try {
-        // Consulta SQL para obtener pedidos pendientes JUNTANDO datos del cliente
+        // Se asume que la tienda solo maneja la tienda con ID 1 por ahora, o podrías usar req.user.id
+        // Para simplificar, obtenemos todos los pedidos pendientes sin filtrar por tienda ID
         const [orders] = await pool.execute(`
             SELECT 
                 o.id,
@@ -234,7 +233,7 @@ app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
                 o.delivery_notes
             FROM orders o
             JOIN users u ON o.user_id = u.id
-            WHERE o.status = 'pending'
+            WHERE o.status IN ('pending', 'preparing', 'ready')
             ORDER BY o.created_at ASC
         `);
 
@@ -248,6 +247,43 @@ app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
         res.status(500).json({ message: "Error interno del servidor al obtener pedidos." });
     }
 });
+
+// ==========================================================
+// RUTA DE ACTUALIZACIÓN DE ESTADO DE ÓRDENES (PUT /api/shop/orders/:id)
+// ==========================================================
+
+app.put('/api/shop/orders/:id', verifyToken, isShop, async (req, res) => {
+    const orderId = req.params.id;
+    const { status } = req.body;
+    
+    // Lista de estados permitidos
+    const validStatuses = ['preparing', 'ready', 'delivered', 'cancelled'];
+
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ message: "Estado de pedido inválido." });
+    }
+
+    try {
+        // En una app real, aquí debería ir: WHERE id = ? AND shop_id = ?
+        // Como solo tienes una tienda y no estamos usando el shop_id del token por ahora, 
+        // simplificaremos la condición.
+        const [result] = await pool.execute(
+            `UPDATE orders SET status = ? WHERE id = ?`,
+            [status, orderId] 
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Pedido no encontrado." });
+        }
+
+        res.status(200).json({ message: `Estado del pedido #${orderId} actualizado a ${status}.` });
+
+    } catch (error) {
+        console.error("Error al actualizar estado del pedido:", error);
+        res.status(500).json({ message: "Error interno del servidor." });
+    }
+});
+
 
 // ==========================================================
 // INICIO DEL SERVIDOR
