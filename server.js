@@ -1,4 +1,4 @@
-// server.js - Backend Cuah-Quick API (Final con Gestión de Pedidos)
+// server.js - Backend Cuah-Quick API (Final con Gestión de Pedidos y Menú)
 
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -179,6 +179,32 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================================
+// RUTA PARA OBTENER EL MENÚ (GET /api/menu)
+// ==========================================================
+
+app.get('/api/menu', async (req, res) => {
+    try {
+        // --- SIMULACIÓN DE MENÚ ---
+        const menu = [
+            { id: 1, name: "Café Americano", price: 25.00 },
+            { id: 2, name: "Latte Frío", price: 35.00 },
+            { id: 3, name: "Jugo Verde", price: 40.00 },
+            { id: 4, name: "Sándwich de Pavo", price: 55.00 },
+            { id: 5, name: "Muffin de Chocolate", price: 28.00 }
+        ];
+
+        res.status(200).json({ 
+            message: "Menú obtenido exitosamente.",
+            products: menu
+        });
+
+    } catch (error) {
+        console.error("Error al obtener el menú:", error);
+        res.status(500).json({ message: "Error interno del servidor al obtener el menú." });
+    }
+});
+
+// ==========================================================
 // RUTA DE CREACIÓN DE ÓRDENES DEL CLIENTE (POST /api/orders)
 // ==========================================================
 
@@ -195,6 +221,8 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     try {
         const status = 'pending';
         
+        // NOTA: total_amount debería ser el total de los items del carrito, 
+        // pero lo recibimos directamente del frontend por ahora.
         const [result] = await pool.execute(
             `INSERT INTO orders (user_id, shop_id, total_amount, building, classroom, delivery_notes, status)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -218,8 +246,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 
 app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
     try {
-        // Se asume que la tienda solo maneja la tienda con ID 1 por ahora, o podrías usar req.user.id
-        // Para simplificar, obtenemos todos los pedidos pendientes sin filtrar por tienda ID
         const [orders] = await pool.execute(`
             SELECT 
                 o.id,
@@ -264,9 +290,6 @@ app.put('/api/shop/orders/:id', verifyToken, isShop, async (req, res) => {
     }
 
     try {
-        // En una app real, aquí debería ir: WHERE id = ? AND shop_id = ?
-        // Como solo tienes una tienda y no estamos usando el shop_id del token por ahora, 
-        // simplificaremos la condición.
         const [result] = await pool.execute(
             `UPDATE orders SET status = ? WHERE id = ?`,
             [status, orderId] 
