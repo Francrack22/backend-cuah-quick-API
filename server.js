@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { Pool } = require('pg');
-const bcrypt = require('bcrypt');
+const bcrypt = require = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 require('dotenv').config();
@@ -25,7 +25,11 @@ const db = new Pool({
     }
 });
 
-// Middleware de verificación de Token JWT (para rutas protegidas)
+// ==========================================================
+// MIDDLEWARES DE AUTENTICACIÓN Y AUTORIZACIÓN (RBAC)
+// ==========================================================
+
+// Middleware 1: Verifica el Token JWT
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -38,13 +42,24 @@ const verifyToken = (req, res, next) => {
         if (err) {
             return res.status(401).json({ message: "No autorizado, token fallido o expirado." });
         }
+        // Adjuntamos el usuario al request
         req.user = user; 
         next();
     });
 };
 
+// Middleware 2: Verifica que el usuario sea 'shop'
+const isShop = (req, res, next) => {
+    // El rol se verifica desde el token decodificado (req.user)
+    if (req.user && req.user.role === 'shop') {
+        next();
+    } else {
+        return res.status(403).json({ message: "Acceso denegado. Se requiere rol de tienda." });
+    }
+};
+
 // ==========================================================
-// RUTA DE REGISTRO (CORREGIDA CON VALIDACIÓN DE MATRÍCULA VS. CORREO)
+// RUTA DE REGISTRO
 // ==========================================================
 
 app.post('/api/register', async (req, res, next) => {
@@ -66,32 +81,33 @@ app.post('/api/register', async (req, res, next) => {
         
         // 3. VALIDACIÓN DE MATRÍCULA VS. CORREO
         const localPart = email.split('@')[0]; 
-        const match = localPart.match(/(\d+)$/); // Extrae la secuencia de números al final
+        const match = localPart.match(/(\d+)$/); 
 
         if (match) {
             const matriculaEnCorreo = match[0];
             
-            // Compara los números extraídos con la matrícula enviada
             if (matriculaEnCorreo !== student_id) {
                 return res.status(400).json({ 
                     message: "La matrícula proporcionada no coincide con los números de tu correo institucional." 
                 });
             }
         } else {
-            // Si el correo no tiene números (ej: "fortega@ucq.edu.mx")
             return res.status(400).json({ 
                 message: "Formato de correo institucional incorrecto. Debe contener la matrícula." 
             });
         }
         
-        // 4. CONTINUAR CON EL PROCESO NORMAL (Hashing y SQL)
+        // 4. CONTINUAR CON EL PROCESO NORMAL 
+        // Nota: Aseguramos que los usuarios nuevos se registren como 'client', 
+        // para que solo la tienda pueda asignar el rol 'shop' manualmente.
+        const finalRole = 'client'; 
         const hashedPassword = await bcrypt.hash(password, 10);
         
         const result = await db.query(
             `INSERT INTO users (full_name, email, password_hash, phone, role, student_id)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING id, full_name, email, role, student_id`,
-            [full_name, email, hashedPassword, phone, role || 'client', student_id]
+            [full_name, email, hashedPassword, phone, finalRole, student_id]
         );
 
         const newUser = result.rows[0];
@@ -124,7 +140,7 @@ app.post('/api/register', async (req, res, next) => {
 });
 
 // ==========================================================
-// RUTA DE LOGIN (ASUME LÓGICA EXISTENTE)
+// RUTA DE LOGIN
 // ==========================================================
 
 app.post('/api/login', async (req, res) => {
@@ -162,14 +178,46 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================================
-// RUTA DE ÓRDENES (PROTEGIDA)
+// RUTA DE PEDIDOS PARA LA TIENDA (PROTEGIDA POR ROL)
+// ==========================================================
+// Endpoint que usa los dos middlewares: 1. Autenticación (verifyToken) y 2. Autorización (isShop)
+app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
+    try {
+        // Asumiendo que tienes una tabla 'orders'
+        const result = await db.query(`
+            SELECT 
+                o.id,
+                o.status,
+                o.total_amount,
+                o.created_at,
+                u.full_name AS client_name,
+                u.phone AS client_phone
+            FROM orders o
+            JOIN users u ON o.user_id = u.id
+            WHERE o.status = 'pending'
+            ORDER BY o.created_at ASC
+        `);
+
+        res.status(200).json({ 
+            message: "Pedidos pendientes obtenidos exitosamente.",
+            orders: result.rows
+        });
+
+    } catch (error) {
+        console.error("Error al obtener pedidos:", error);
+        res.status(500).json({ message: "Error interno del servidor al obtener pedidos." });
+    }
+});
+
+// ==========================================================
+// RUTA DE ÓRDENES DEL CLIENTE (EJEMPLO)
 // ==========================================================
 
-// app.post('/api/orders', verifyToken, async (req, res) => {
-//     // Esta es la ruta que ya tenías funcionando
-//     // (Debes insertar la lógica de creación de orden aquí)
-//     res.status(201).json({ message: "Orden creada exitosamente." });
-// });
+app.post('/api/orders', verifyToken, async (req, res) => {
+    // Aquí iría la lógica para que el cliente cree una orden.
+    // Usaría req.user.id para saber qué usuario está creando la orden.
+    res.status(201).json({ message: "Ruta de creación de orden (pendiente de implementación)." });
+});
 
 // ==========================================================
 // INICIO DEL SERVIDOR
