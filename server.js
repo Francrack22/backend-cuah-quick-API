@@ -1,7 +1,7 @@
 // server.js - Backend Cuah-Quick API (Final con MySQL y Roles)
 
 const express = require('express');
-const mysql = require('mysql2/promise'); // Usamos mysql2/promise para async/await
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -14,15 +14,23 @@ const port = process.env.PORT || 3000;
 // CONFIGURACIÓN DE MIDDLEWARES Y BASE DE DATOS (MySQL)
 // ==========================================================
 
-app.use(cors());
+// 🚀 SOLUCIÓN CORS: Configuración específica para aceptar peticiones de GitHub Pages
+const corsOptions = {
+    // Reemplaza 'francrack22.github.io' por tu dominio exacto si cambia.
+    origin: 'https://francrack22.github.io', 
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+    optionsSuccessStatus: 204 // Para navegadores antiguos
+};
+app.use(cors(corsOptions));
+// FIN DE LA SOLUCIÓN CORS
+
 app.use(express.json());
 
 // Conexión a la Base de Datos MySQL
-// Utiliza la variable de entorno DATABASE_URL (que debe ser mysql://...)
 const dbUrl = process.env.DATABASE_URL;
 if (!dbUrl) {
-    console.error("❌ ERROR: La variable DATABASE_URL no está configurada. El servidor no puede iniciar la conexión.");
-    // Detiene el despliegue si la variable crítica no existe.
+    console.error("❌ ERROR: La variable DATABASE_URL no está configurada.");
     throw new Error("La variable DATABASE_URL es requerida para la conexión a la base de datos.");
 }
 const pool = mysql.createPool(dbUrl);
@@ -37,11 +45,12 @@ const verifyToken = (req, res, next) => {
         return res.status(401).json({ message: "No autorizado, no se encontró token." });
     }
 
+    // 💡 Asegúrate que JWT_SECRET esté definido en las variables de entorno de Render
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
+            // Este error puede ser 401 por token expirado
             return res.status(401).json({ message: "No autorizado, token fallido o expirado." });
         }
-        // Adjuntamos el usuario al request
         req.user = user; 
         next();
     });
@@ -49,7 +58,6 @@ const verifyToken = (req, res, next) => {
 
 // Middleware 2: Verifica que el usuario sea 'shop'
 const isShop = (req, res, next) => {
-    // El rol se verifica desde el token decodificado (req.user)
     if (req.user && req.user.role === 'shop') {
         next();
     } else {
@@ -100,14 +108,12 @@ app.post('/api/register', async (req, res, next) => {
         const finalRole = 'client'; // El rol por defecto es 'client'
         const hashedPassword = await bcrypt.hash(password, 10);
         
-        // Ejecución de la consulta SQL con MySQL2
         const [result] = await pool.execute(
             `INSERT INTO users (full_name, email, password_hash, phone, role, student_id)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [full_name, email, hashedPassword, phone, finalRole, student_id]
         );
 
-        // En MySQL2, el ID insertado está en result.insertId
         const newUser = { 
             id: result.insertId, 
             full_name, email, 
@@ -144,9 +150,8 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     
     try {
-        // Ejecución de la consulta SQL con MySQL2
         const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-        const user = rows[0]; // MySQL devuelve el resultado en la primera posición del array
+        const user = rows[0];
 
         if (!user || !(await bcrypt.compare(password, user.password_hash))) {
             return res.status(401).json({ message: "Credenciales inválidas." });
@@ -165,7 +170,7 @@ app.post('/api/login', async (req, res) => {
                 id: user.id,
                 full_name: user.full_name,
                 email: user.email,
-                role: user.role,
+                role: user.role, // ¡CRUCIAL para el Frontend!
             }
         });
 
@@ -180,13 +185,11 @@ app.post('/api/login', async (req, res) => {
 // ==========================================================
 
 app.post('/api/orders', verifyToken, async (req, res) => {
-    // El ID del usuario está en el token, gracias a verifyToken
+    // El ID del usuario está en el token
     const user_id = req.user.id; 
     
-    // Obtenemos la información del pedido del cuerpo de la solicitud
     const { shop_id, total_amount, building, classroom, delivery_notes } = req.body;
     
-    // Validaciones mínimas
     if (!shop_id || !total_amount || !building || !classroom) {
         return res.status(400).json({ message: "Faltan campos obligatorios para el pedido." });
     }
@@ -194,7 +197,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     try {
         const status = 'pending';
         
-        // Ejecución de la consulta SQL con MySQL2
         const [result] = await pool.execute(
             `INSERT INTO orders (user_id, shop_id, total_amount, building, classroom, delivery_notes, status)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -213,12 +215,12 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 });
 
 // ==========================================================
-// RUTA DE PEDIDOS PARA LA TIENDA (PROTEGIDA POR ROL)
+// RUTA DE PEDIDOS PARA LA TIENDA (GET /api/shop/orders)
 // ==========================================================
 
 app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
     try {
-        // Consulta SQL con sintaxis MySQL
+        // Consulta SQL para obtener pedidos pendientes JUNTANDO datos del cliente
         const [orders] = await pool.execute(`
             SELECT 
                 o.id,
