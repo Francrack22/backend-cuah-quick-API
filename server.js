@@ -1,4 +1,4 @@
-// server.js - Backend Cuah-Quick API (CORREGIDO PARA MYSQL)
+// server.js - Backend Cuah-Quick API (Final con MySQL y Roles)
 
 const express = require('express');
 const mysql = require('mysql2/promise'); // Usamos mysql2/promise para async/await
@@ -17,12 +17,18 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Conexión a la Base de Datos MySQL (usando variables de DigitalOcean)
-// Nota: Usamos mysql.createPool para manejar múltiples conexiones
-const pool = mysql.createPool(process.env.DATABASE_URL);
+// Conexión a la Base de Datos MySQL
+// Utiliza la variable de entorno DATABASE_URL (que debe ser mysql://...)
+const dbUrl = process.env.DATABASE_URL;
+if (!dbUrl) {
+    console.error("❌ ERROR: La variable DATABASE_URL no está configurada. El servidor no puede iniciar la conexión.");
+    // Detiene el despliegue si la variable crítica no existe.
+    throw new Error("La variable DATABASE_URL es requerida para la conexión a la base de datos.");
+}
+const pool = mysql.createPool(dbUrl);
 
 
-// Middleware de verificación de Token JWT (para rutas protegidas)
+// Middleware 1: Verifica el Token JWT
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -35,6 +41,7 @@ const verifyToken = (req, res, next) => {
         if (err) {
             return res.status(401).json({ message: "No autorizado, token fallido o expirado." });
         }
+        // Adjuntamos el usuario al request
         req.user = user; 
         next();
     });
@@ -42,6 +49,7 @@ const verifyToken = (req, res, next) => {
 
 // Middleware 2: Verifica que el usuario sea 'shop'
 const isShop = (req, res, next) => {
+    // El rol se verifica desde el token decodificado (req.user)
     if (req.user && req.user.role === 'shop') {
         next();
     } else {
@@ -55,7 +63,7 @@ const isShop = (req, res, next) => {
 
 app.post('/api/register', async (req, res, next) => {
     try {
-        const { full_name, email, password, phone, role, student_id } = req.body;
+        const { full_name, email, password, phone, student_id } = req.body;
         
         // 1. VALIDACIÓN DE CAMPOS OBLIGATORIOS
         if (!full_name || !email || !password || !phone || !student_id) {
@@ -89,7 +97,7 @@ app.post('/api/register', async (req, res, next) => {
         }
         
         // 4. CONTINUAR CON EL PROCESO NORMAL 
-        const finalRole = 'client'; 
+        const finalRole = 'client'; // El rol por defecto es 'client'
         const hashedPassword = await bcrypt.hash(password, 10);
         
         // Ejecución de la consulta SQL con MySQL2
@@ -120,7 +128,6 @@ app.post('/api/register', async (req, res, next) => {
         });
 
     } catch (error) {
-        // El código 'ER_DUP_ENTRY' es el equivalente a '23505' de PostgreSQL
         if (error.code === 'ER_DUP_ENTRY') { 
             return res.status(400).json({ message: "El correo electrónico o la matrícula ya están registrados." });
         }
@@ -169,8 +176,46 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================================
+// RUTA DE CREACIÓN DE ÓRDENES DEL CLIENTE (POST /api/orders)
+// ==========================================================
+
+app.post('/api/orders', verifyToken, async (req, res) => {
+    // El ID del usuario está en el token, gracias a verifyToken
+    const user_id = req.user.id; 
+    
+    // Obtenemos la información del pedido del cuerpo de la solicitud
+    const { shop_id, total_amount, building, classroom, delivery_notes } = req.body;
+    
+    // Validaciones mínimas
+    if (!shop_id || !total_amount || !building || !classroom) {
+        return res.status(400).json({ message: "Faltan campos obligatorios para el pedido." });
+    }
+
+    try {
+        const status = 'pending';
+        
+        // Ejecución de la consulta SQL con MySQL2
+        const [result] = await pool.execute(
+            `INSERT INTO orders (user_id, shop_id, total_amount, building, classroom, delivery_notes, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [user_id, shop_id, total_amount, building, classroom, delivery_notes || '', status]
+        );
+
+        res.status(201).json({ 
+            message: "Orden creada exitosamente.",
+            order_id: result.insertId
+        });
+
+    } catch (error) {
+        console.error("Error al crear la orden:", error);
+        res.status(500).json({ message: "Error interno del servidor al procesar la orden." });
+    }
+});
+
+// ==========================================================
 // RUTA DE PEDIDOS PARA LA TIENDA (PROTEGIDA POR ROL)
 // ==========================================================
+
 app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
     try {
         // Consulta SQL con sintaxis MySQL
@@ -181,7 +226,10 @@ app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
                 o.total_amount,
                 o.created_at,
                 u.full_name AS client_name,
-                u.phone AS client_phone
+                u.phone AS client_phone,
+                o.building,
+                o.classroom,
+                o.delivery_notes
             FROM orders o
             JOIN users u ON o.user_id = u.id
             WHERE o.status = 'pending'
@@ -197,14 +245,6 @@ app.get('/api/shop/orders', verifyToken, isShop, async (req, res) => {
         console.error("Error al obtener pedidos:", error);
         res.status(500).json({ message: "Error interno del servidor al obtener pedidos." });
     }
-});
-
-// ==========================================================
-// RUTA DE ÓRDENES DEL CLIENTE (EJEMPLO)
-// ==========================================================
-
-app.post('/api/orders', verifyToken, async (req, res) => {
-    res.status(201).json({ message: "Ruta de creación de orden (pendiente de implementación)." });
 });
 
 // ==========================================================
