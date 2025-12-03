@@ -1,4 +1,4 @@
-// server.js - Backend Cuah-Quick API (CORREGIDO PARA SSL DE DIGITALOCEAN)
+// server.js - Backend Cuah-Quick API (CORREGIDO Y OPTIMIZADO PARA LOGS)
 
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -8,10 +8,11 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+// Usa el puerto proporcionado por Render o 3000 como fallback
+const port = process.env.PORT || 3000; 
 
 // ==========================================================
-// CONFIGURACIÓN CORS
+// CONFIGURACIÓN CORS Y MIDDLEWARE
 // ==========================================================
 const corsOptions = {
     origin: 'https://francrack22.github.io', 
@@ -23,54 +24,53 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // ==========================================================
-// CONEXIÓN ROBUSTA A BASE DE DATOS (FIX SSL)
+// CONEXIÓN ROBUSTA A BASE DE DATOS (MySQL/DigitalOcean)
 // ==========================================================
 
 let pool;
 
-try {
-    // 1. Verificamos que la URL exista
-    if (!process.env.DATABASE_URL) {
-        throw new Error("DATABASE_URL no está definida en las variables de entorno.");
+async function initializeDatabase() {
+    try {
+        if (!process.env.DATABASE_URL) {
+            throw new Error("DATABASE_URL no está definida en las variables de entorno.");
+        }
+
+        const dbUrl = new URL(process.env.DATABASE_URL);
+
+        const dbConfig = {
+            host: dbUrl.hostname,
+            user: dbUrl.username,
+            password: dbUrl.password,
+            database: dbUrl.pathname.slice(1),
+            port: dbUrl.port || 25060,
+            // Configuración SSL necesaria para DigitalOcean/Render/MySQL
+            ssl: { 
+                rejectUnauthorized: false 
+            }, 
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0
+        };
+
+        pool = mysql.createPool(dbConfig);
+        
+        // Prueba de conexión
+        const connection = await pool.getConnection();
+        connection.release(); // Liberar la conexión inmediatamente
+        console.log("✅ ¡CONEXIÓN EXITOSA A LA BASE DE DATOS!");
+
+    } catch (error) {
+        console.error("❌ ERROR FATAL AL CONECTAR A LA BD:", error.message);
+        // Opcional: Terminar la aplicación si la BD es crucial para el arranque
+        // process.exit(1); 
     }
-
-    // 2. Parseamos la URL para configurarla manualmente
-    // Esto evita el error de "ssl-mode" ignorado
-    const dbUrl = new URL(process.env.DATABASE_URL);
-
-    const dbConfig = {
-        host: dbUrl.hostname,
-        user: dbUrl.username,
-        password: dbUrl.password,
-        database: dbUrl.pathname.slice(1), // Quitamos la barra inicial '/'
-        port: dbUrl.port || 25060,
-        ssl: {
-            rejectUnauthorized: false // IMPORTANTE: Permite la conexión SSL con DigitalOcean
-        },
-        waitForConnections: true,
-        connectionLimit: 10,
-        queueLimit: 0
-    };
-
-    // 3. Creamos el pool con la configuración manual
-    pool = mysql.createPool(dbConfig);
-    
-    // 4. Prueba de conexión inmediata para ver si funciona al arrancar
-    pool.getConnection()
-        .then(connection => {
-            console.log("✅ ¡CONEXIÓN EXITOSA A LA BASE DE DATOS!");
-            connection.release();
-        })
-        .catch(err => {
-            console.error("❌ ERROR FATAL AL CONECTAR A LA BD:", err.message);
-        });
-
-} catch (error) {
-    console.error("❌ Error configurando la base de datos:", error.message);
 }
 
+// Inicia la conexión
+initializeDatabase();
+
 // ==========================================================
-// MIDDLEWARES
+// MIDDLEWARES DE AUTENTICACIÓN
 // ==========================================================
 
 const verifyToken = (req, res, next) => {
@@ -95,30 +95,41 @@ const isShop = (req, res, next) => {
 // RUTAS
 // ==========================================================
 
-// --- REGISTRO (Con logs para depuración) ---
+// --- REGISTRO (CON LOGS DE DEPURACIÓN MEJORADOS) ---
 app.post('/api/register', async (req, res) => {
-    console.log("📩 Solicitud de registro recibida:", req.body.email); // LOG
+    // LOG 1: Recepción de la solicitud y datos
+    console.log("-----------------------------------------");
+    console.log("📩 Solicitud de registro recibida.");
+    console.log("Datos:", JSON.stringify(req.body)); 
+    console.log("-----------------------------------------");
 
     try {
         const { full_name, email, password, phone, student_id } = req.body;
         
+        // --- Validaciones ---
         if (!full_name || !email || !password || !phone || !student_id) {
+            console.log("🚫 Fallo en validación: Faltan campos obligatorios.");
             return res.status(400).json({ message: "Todos los campos son obligatorios." });
         }
         
         const requiredDomain = '@ucq.edu.mx'; 
         if (!email.toLowerCase().endsWith(requiredDomain)) {
+            console.log(`🚫 Fallo en validación: Correo no es ${requiredDomain}.`);
             return res.status(400).json({ message: `Solo correos ${requiredDomain} permitidos.` });
         }
         
         const localPart = email.split('@')[0]; 
         const match = localPart.match(/(\d+)$/); 
         if (!match || match[0] !== student_id) {
+            console.log("🚫 Fallo en validación: Matrícula no coincide con el correo.");
             return res.status(400).json({ message: "La matrícula no coincide con el correo." });
         }
         
         const finalRole = 'client'; 
         const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // LOG 2: Ejecución de la consulta
+        console.log("🔎 Intentando insertar en la BD...");
         
         // Ejecución SQL
         const [result] = await pool.execute(
@@ -127,7 +138,9 @@ app.post('/api/register', async (req, res) => {
             [full_name, email, hashedPassword, phone, finalRole, student_id]
         );
 
-        console.log("✅ Usuario registrado con ID:", result.insertId); // LOG ÉXITO
+        // LOG 3: Éxito
+        console.log(`✅ Usuario registrado exitosamente. ID: ${result.insertId}`);
+        console.log("-----------------------------------------");
 
         const newUser = { id: result.insertId, full_name, email, role: finalRole, student_id };
         const token = jwt.sign({ id: newUser.id, role: newUser.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -135,10 +148,15 @@ app.post('/api/register', async (req, res) => {
         res.status(201).json({ message: "Registro exitoso.", token, user: newUser });
 
     } catch (error) {
-        console.error("❌ ERROR EN EL REGISTRO:", error); // LOG ERROR
+        // LOG 4: Error
+        console.error("❌ ERROR EN EL REGISTRO:", error.message); 
+        console.error("Detalles del Error:", error);
+        console.log("-----------------------------------------");
+        
         if (error.code === 'ER_DUP_ENTRY') { 
             return res.status(400).json({ message: "El correo o matrícula ya están registrados." });
         }
+        // Error genérico del servidor
         res.status(500).json({ message: "Error interno del servidor.", error: error.message });
     }
 });
